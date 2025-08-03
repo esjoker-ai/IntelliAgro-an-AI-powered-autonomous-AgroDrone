@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Drone Detection Dashboard</title>
+
+    <!-- Local (offline) Chart.js -->
+    <script src="{{ url_for('static', filename='chart.umd.js') }}"></script>
+    <script src="{{ url_for('static', filename='chartjs-adapter-date-fns.bundle.js') }}"></script>
+
+    <style>
+        :root {
+            --lane-fresh: 1;
+            --lane-disease: 2;
+            --lane-spray: 3;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f8f9fa;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+            text-align: center;
+        }
+        header {
+            margin-bottom: 20px;
+        }
+
+        /* Side-by-side layout */
+        .dashboard-container {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            gap: 20px;
+            flex-wrap: wrap; /* stacks on small screens */
+            margin-top: 10px;
+        }
+
+        /* 640×480 fixed video box */
+        .video-container {
+            width: 640px;
+            height: 480px;
+            max-width: 100%;
+            aspect-ratio: 4 / 3;
+            border: 2px solid #444;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 0 10px rgba(0,0,0,0.3);
+            background: #000;
+        }
+        #videoStream {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        /* Small chart */
+        .chart-container {
+            width: 400px;
+            max-width: 100%;
+            background: #fff;
+            padding: 10px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        canvas#detectionChart {
+            max-width: 100%;
+            max-height: 300px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 10px;
+        }
+        #startBtn {
+            background: #28a745;
+            color: #fff;
+        }
+        #stopBtn {
+            background: #dc3545;
+            color: #fff;
+        }
+        #status {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #007bff;
+        }
+    </style>
+</head>
+<body>
+<header>
+    <h1>🚁 Drone Detection Dashboard</h1>
+    <button id="startBtn">Start (Takeoff + Stream ON)</button>
+    <button id="stopBtn">Stop (Stream OFF + Land)</button>
+    <div id="status">Status: Idle</div>
+</header>
+
+<div class="dashboard-container">
+    <!-- Drone Video Stream -->
+    <div class="video-container">
+        <img src="/video_feed" alt="Drone Video Stream" id="videoStream">
+    </div>
+
+    <!-- Real-time Chart -->
+    <div class="chart-container">
+        <h2 style="font-size: 18px;">📈 Real-Time Detection Log</h2>
+        <canvas id="detectionChart"></canvas>
+    </div>
+</div>
+
+<script>
+    const statusEl = document.getElementById('status');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+
+    startBtn.addEventListener('click', async () => {
+        statusEl.textContent = 'Status: Starting (Takeoff + Stream ON)...';
+        try {
+            const res = await fetch('/start?takeoff=true', { method: 'POST' });
+            const data = await res.json();
+            statusEl.textContent = 'Status: ' + (data.status || 'started').toUpperCase();
+        } catch (e) {
+            statusEl.textContent = 'Status: ERROR starting';
+            console.error(e);
+        }
+    });
+
+    stopBtn.addEventListener('click', async () => {
+        statusEl.textContent = 'Status: Stopping (Stream OFF + Land)...';
+        try {
+            const res = await fetch('/stop', { method: 'POST' });
+            const data = await res.json();
+            statusEl.textContent = 'Status: ' + (data.status || 'stopping').toUpperCase();
+        } catch (e) {
+            statusEl.textContent = 'Status: ERROR stopping';
+            console.error(e);
+        }
+    });
+
+    // === Chart.js scatter with distinct lanes (no overlap) ===
+    const LANES = { fresh: 1, disease: 2, spray: 3 };
+
+    const ctx = document.getElementById('detectionChart').getContext('2d');
+    const detectionChart = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+            datasets: [
+                { label: 'Disease', data: [], backgroundColor: 'red',   pointRadius: 4, showLine: false },
+                { label: 'Fresh',   data: [], backgroundColor: 'green', pointRadius: 4, showLine: false },
+                { label: 'Spray',   data: [], backgroundColor: 'blue',  pointRadius: 4, showLine: false }
+            ]
+        },
+        options: {
+            responsive: true,
+            animation: false,
+            parsing: false,
+            plugins: {
+                legend: { position: 'top' },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => {
+                            const label = ctx.dataset.label || '';
+                            const t = new Date(ctx.raw.x);
+                            return `${label} @ ${t.toLocaleTimeString()}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: { unit: 'second', tooltipFormat: 'HH:mm:ss' },
+                    title: { display: true, text: 'Time' }
+                },
+                y: {
+                    min: 0.5,
+                    max: 3.5,
+                    ticks: {
+                        stepSize: 1,
+                        callback: (v) => {
+                            if (v === LANES.fresh) return 'Fresh';
+                            if (v === LANES.disease) return 'Disease';
+                            if (v === LANES.spray) return 'Spray';
+                            return '';
+                        }
+                    },
+                    title: { display: true, text: 'Event Type' }
+                }
+            }
+        }
+    });
+
+    function fetchEvents() {
+        fetch('/events_json')
+            .then(res => res.json())
+            .then(data => {
+                detectionChart.data.datasets[0].data = (data.disease || []).map(t => ({ x: t, y: LANES.disease }));
+                detectionChart.data.datasets[1].data = (data.fresh   || []).map(t => ({ x: t, y: LANES.fresh }));
+                detectionChart.data.datasets[2].data = (data.spray   || []).map(t => ({ x: t, y: LANES.spray }));
+                detectionChart.update();
+            })
+            .catch(console.error);
+    }
+
+    setInterval(fetchEvents, 2000);
+</script>
+</body>
+</html>
