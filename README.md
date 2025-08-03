@@ -1,0 +1,2 @@
+# IntelliAgro-an-AI-powered-autonomous-drone-designed-to-revolutionize-modern-agriculture.
+IntelliAgro Drone is a final year project that uses AI and a drone to help farmers detect crop diseases and spray only the affected plants. It uses the YOLO deep learning model for real-time detection and an ESP32-based system to control spraying.  The drone streams live video to a web dashboard where detections are shown.
